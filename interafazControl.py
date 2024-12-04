@@ -3,19 +3,21 @@ import tkinter as tk
 from tkinter import ttk
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
-import numpy as np
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from collections import deque
 import serial.tools.list_ports
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg  # Importar el canvas de Tkinter
+import time
 
+# Configuración global
 MAX_DATA_POINTS = 100
-angulos = []
-tiempos = []
+DATA_INTERVAL = 15  # Intervalo de actualización en milisegundos
+DATA_POINTS = 10  # Puntos máximos a graficar
 
 class Interfaz:
-    def __init__(self, root):
+    def __init__(self, root):   
         self.root = root
         self.root.title("Control de posición")
-        self.root.geometry("1000x500")  # Aumentamos el tamaño de la ventana para acomodar la gráfica
+        self.root.geometry("1000x500")
 
         self.comboBox1 = ttk.Combobox(root, state="readonly")
         self.comboBox1.place(x=100, y=303)
@@ -26,7 +28,7 @@ class Interfaz:
         self.conectarButton.place(x=250, y=300)
 
         self.instrucciones = tk.Label(root, text="Ingrese un ángulo", font=(13))
-        self.instrucciones.place(x=150 , y=100)
+        self.instrucciones.place(x=150, y=100)
 
         self.anguloInput = tk.Entry(root)
         self.anguloInput.place(x=150, y=150)
@@ -36,6 +38,7 @@ class Interfaz:
 
         self.validador_angulo = tk.Label(root, text="Ángulo inválido", fg="red")
 
+        # Configuración de PID
         self.kpInput = tk.Entry(root)
         self.kpInput.place(x=400, y=150)
         self.kpInput.insert(0, "0.6")
@@ -52,28 +55,28 @@ class Interfaz:
         self.resetPID.place(x=400, y=300)
 
         self.serial_port = None
-
-        self.create_chart(root)  # Crear la gráfica dentro de la interfaz
-
-        # Buscar y actualizar puertos seriales disponibles
+        self.create_chart(root)  # Crear la gráfica
         self.update_ports()
+
+        # Inicializar colas para datos
+        self.angles = deque([0] * DATA_POINTS, maxlen=DATA_POINTS)
+        self.times = deque([0] * DATA_POINTS, maxlen=DATA_POINTS)
+        self.start_time = time.time()  # Tiempo de inicio
 
         self.root.protocol("WM_DELETE_WINDOW", self.cerrar_ventana)
 
     def send_data(self):
-        angulo = self.anguloInput.get()  # Obtener el valor como string
-        
+        angulo = self.anguloInput.get()
         try:
-            angulo_float = float(angulo)  
-            if angulo_float < 0:  
+            angulo_float = float(angulo)
+            if angulo_float < 0:
                 self.validador_angulo.place(x=170, y=170)
             else:
-                self.validador_angulo.place_forget()  
+                self.validador_angulo.place_forget()
                 if self.serial_port:
                     self.serial_port.write(angulo.encode())
-        except ValueError:  
+        except ValueError:
             self.validador_angulo.place(x=170, y=170)
-
 
     def on_combobox_select(self, event):
         if self.comboBox1.get() != "Seleccione puerto":
@@ -99,98 +102,77 @@ class Interfaz:
         self.ax.set_title("Valores de Ángulo en Tiempo Real")
         self.ax.set_xlabel("Tiempo (s)")
         self.ax.set_ylabel("Ángulo (°)")
+        self.ax.set_xlim(0, MAX_DATA_POINTS)
+        self.ax.set_ylim(-360, 360)
 
-        self.x_data = []
-        self.y_data = []
+        # Línea inicial vacía
+        self.line, = self.ax.plot([], [], lw=2, label="Ángulo")
 
-        self.line, = self.ax.plot([], [], lw=2)
-
-        # Crear el canvas de matplotlib y añadirlo al panel de Tkinter
+        # Canvas de Matplotlib en Tkinter
         self.canvas = FigureCanvasTkAgg(self.fig, master=root)
-        self.canvas.get_tk_widget().place(x=600, y=100, width=400, height=250)  # Colocar el canvas en el lugar deseado
+        self.canvas.get_tk_widget().place(x=600, y=50, width=400, height=400)
         self.canvas.draw()
 
-        ani = FuncAnimation(self.fig, self.update_chart, interval=100, blit = False, save_count=MAX_DATA_POINTS)
-        self.canvas.draw()  # Redibujar la gráfica para actualizarla
+        # Animación de la gráfica
+        self.ani = FuncAnimation(self.fig, self.update_chart, interval=DATA_INTERVAL, blit=False)
 
     def update_chart(self, frame):
         if self.serial_port and self.serial_port.in_waiting > 0:
             input_data = self.read_from_serial()
 
             try:
+                # Convertir el dato recibido a un flotante
                 angulo = float(input_data)
-                tiempo = len(self.x_data)  # Tiempo basado en la cantidad de datos recibidos
-                self.x_data.append(tiempo)
-                self.y_data.append(angulo)
+                tiempo_actual = time.time() - self.start_time  # Tiempo relativo al inicio
 
+                # Agregar datos a las colas
+                self.times.append(tiempo_actual)
+                self.angles.append(angulo)
 
-                if len(angulos) > MAX_DATA_POINTS:
-                    angulos.pop(0)
-                    tiempos.pop(0)
+                # Actualizar los datos de la línea
+                self.line.set_data(self.times, self.angles)
 
-                self.x_data = np.array(tiempos)
-                self.y_data = np.array(angulos)
-
-                self.line.set_data(self.x_data, self.y_data)
+                # Ajustar los límites del eje
+                self.ax.set_xlim(max(0, self.times[0]), self.times[-1])
+                self.ax.set_ylim(min(self.angles) - 10, max(self.angles) + 10)
 
             except ValueError:
                 print(f"Error al convertir los datos: {input_data}")
 
         self.canvas.draw()
-        return self.line,
+        return self.line
 
-    
+
     def read_from_serial(self):
         if self.serial_port:
             try:
                 # Leer una línea del puerto serial
-                data = self.serial_port.readline()  # Leer como bytes
-                try:
-                    # Intentar decodificar en UTF-8
-                    decoded_data = float(data.decode('utf-8').strip())
-                    if decoded_data and all(c in "0123456789.-" for c in decoded_data):  # Asegurarse de que es numérico
-                        return decoded_data  # Solo devolver si es un número
-                    else:
-                        print(f"Dato no válido: {decoded_data}")
-                        return ""  # Ignorar si no es un número
-                except UnicodeDecodeError:
-                    print(f"Error de decodificación en los datos: {data}")
-                    return ""  # Ignorar si no se puede decodificar en UTF-8
-            except Exception as e:
+                data = self.serial_port.readline().decode('utf-8').strip()
+                print(f"Dato recibido: {data}")  # Mostrar los datos recibidos
+                return data
+            except (UnicodeDecodeError, serial.SerialException) as e:
                 print(f"Error al leer del puerto serial: {e}")
-                return ""
         return ""
 
-
-
     def update_ports(self):
-        """
-        Busca puertos seriales disponibles y actualiza el ComboBox.
-        """
-        puertos_disponibles = [port.device for port in serial.tools.list_ports.comports()]
-        if puertos_disponibles:
-            self.comboBox1['values'] = puertos_disponibles
-            self.comboBox1.set("Seleccione una opcion")  # Seleccionar el primer puerto disponible
+        ports = [port.device for port in serial.tools.list_ports.comports()]
+        if ports:
+            self.comboBox1['values'] = ports
+            self.comboBox1.set("Seleccione una opción")
         else:
             self.comboBox1.set("No hay puertos disponibles")
             self.comboBox1.config(state="disabled")
 
     def cerrar_ventana(self):
-        if hasattr(self, 'ani'):
-            self.ani.event_source.stop()  # Detiene la animación si existe
         if self.serial_port:
-            self.serial_port.close()  # Cierra el puerto serial
-        self.root.quit()  # Termina el bucle de Tkinter
-        self.root.destroy()  # Cierra la ventana
-
-
-
+            self.serial_port.close()
+        self.root.quit()
+        self.root.destroy()
 
 def main():
     root = tk.Tk()
     app = Interfaz(root)
     root.mainloop()
-
 
 if __name__ == "__main__":
     main()

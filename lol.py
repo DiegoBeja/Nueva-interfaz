@@ -5,9 +5,9 @@ from collections import deque
 import time
 
 # Configuración del puerto serial
-PORT = 'COM3'  # Cambia esto al puerto donde está conectado tu Arduino
+PORT = 'COM7'  # Cambia esto al puerto donde está c     onectado tu Arduino
 BAUD_RATE = 9600
-DATA_POINTS = 1000 # Número de puntos a graficar
+DATA_POINTS = 100 # Número de puntos a graficar
 
 # Inicializar puerto serial
 ser = serial.Serial(PORT, BAUD_RATE, timeout=1)
@@ -16,7 +16,7 @@ ser = serial.Serial(PORT, BAUD_RATE, timeout=1)
 time.sleep(2)
 
 # Enviar un número para que el Arduino comience a enviar datos
-ser.write(b'1\n')
+ser.write(b'180\n')
 
 # Cola para almacenar datos
 angles = deque([0] * DATA_POINTS, maxlen=DATA_POINTS)
@@ -37,7 +37,7 @@ def update(frame):
     data = read_serial_data()
     if data is not None:
         angles.append(data)
-        current_time = frame * 0.05  # Tiempo en segundos, ajusta el intervalo
+        current_time = frame   # Tiempo en segundos, ajusta el intervalo
         times.append(current_time)
     line.set_ydata(angles)
     line.set_xdata(times)  # Establecer los tiempos en el eje X
