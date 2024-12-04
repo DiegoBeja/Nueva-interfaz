@@ -8,8 +8,6 @@ import serial.tools.list_ports
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg  # Importar el canvas de Tkinter
 
 MAX_DATA_POINTS = 100
-angulos = []
-tiempos = []
 
 class Interfaz:
     def __init__(self, root):
@@ -110,7 +108,7 @@ class Interfaz:
         self.canvas.get_tk_widget().place(x=600, y=100, width=400, height=250)  # Colocar el canvas en el lugar deseado
         self.canvas.draw()
 
-        ani = FuncAnimation(self.fig, self.update_chart, interval=100, blit = False, save_count=MAX_DATA_POINTS)
+        ani = FuncAnimation(self.fig, self.update_chart, interval=100, blit=False, save_count=MAX_DATA_POINTS)
         self.canvas.draw()  # Redibujar la gráfica para actualizarla
 
     def update_chart(self, frame):
@@ -123,13 +121,10 @@ class Interfaz:
                 self.x_data.append(tiempo)
                 self.y_data.append(angulo)
 
-
-                if len(angulos) > MAX_DATA_POINTS:
-                    angulos.pop(0)
-                    tiempos.pop(0)
-
-                self.x_data = np.array(tiempos)
-                self.y_data = np.array(angulos)
+                # Limitar el número de puntos de datos a MAX_DATA_POINTS
+                if len(self.x_data) > MAX_DATA_POINTS:
+                    self.x_data.pop(0)
+                    self.y_data.pop(0)
 
                 self.line.set_data(self.x_data, self.y_data)
 
@@ -139,7 +134,6 @@ class Interfaz:
         self.canvas.draw()
         return self.line,
 
-    
     def read_from_serial(self):
         if self.serial_port:
             try:
@@ -147,8 +141,8 @@ class Interfaz:
                 data = self.serial_port.readline()  # Leer como bytes
                 try:
                     # Intentar decodificar en UTF-8
-                    decoded_data = float(data.decode('utf-8').strip())
-                    if decoded_data and all(c in "0123456789.-" for c in decoded_data):  # Asegurarse de que es numérico
+                    decoded_data = data.decode('utf-8').strip()
+                    if decoded_data.replace(".", "", 1).isdigit():  # Asegurarse de que es numérico
                         return decoded_data  # Solo devolver si es un número
                     else:
                         print(f"Dato no válido: {decoded_data}")
@@ -160,8 +154,6 @@ class Interfaz:
                 print(f"Error al leer del puerto serial: {e}")
                 return ""
         return ""
-
-
 
     def update_ports(self):
         """
@@ -182,8 +174,6 @@ class Interfaz:
             self.serial_port.close()  # Cierra el puerto serial
         self.root.quit()  # Termina el bucle de Tkinter
         self.root.destroy()  # Cierra la ventana
-
-
 
 
 def main():
