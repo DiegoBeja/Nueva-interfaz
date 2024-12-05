@@ -27,6 +27,12 @@ class Interfaz:
         self.conectarButton = tk.Button(root, text="Conectar", state="disabled", command=self.connect_serial)
         self.conectarButton.place(x=250, y=300)
 
+        self.lazoAbiertoButton = tk.Button(root, text="Lazo abierto", command=self.lazo_abierto)
+        self.lazoAbiertoButton.place(x=225, y=400)
+
+        self.lazoCerrado = tk.Button(root, text="Lazo cerrado", command=self.lazo_cerrado)
+        self.lazoCerrado.place(x=125, y=400)
+
         self.instrucciones = tk.Label(root, text="Ingrese un ángulo", font=(13))
         self.instrucciones.place(x=150, y=100)
 
@@ -78,6 +84,12 @@ class Interfaz:
         except ValueError:
             self.validador_angulo.place(x=170, y=170)
 
+    def lazo_abierto(self):
+        print("Lazo abierto")
+
+    def lazo_cerrado(self):
+        print("Lazo cerrado")
+
     def on_combobox_select(self, event):
         if self.comboBox1.get() != "Seleccione puerto":
             self.conectarButton.config(state="normal")
@@ -114,7 +126,7 @@ class Interfaz:
         self.canvas.draw()
 
         # Animación de la gráfica
-        self.ani = FuncAnimation(self.fig, self.update_chart, interval=DATA_INTERVAL, blit=False)
+        self.ani = FuncAnimation(self.fig, self.update_chart, interval=DATA_INTERVAL, blit=False, cache_frame_data=False)
 
     def update_chart(self, frame):
         if self.serial_port and self.serial_port.in_waiting > 0:
