@@ -7,11 +7,12 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from collections import deque
 import serial.tools.list_ports
 import time
+import threading
 
-# Configuración global
 MAX_DATA_POINTS = 100
-DATA_INTERVAL = 15  # Intervalo de actualización en milisegundos
-DATA_POINTS = 10  # Puntos máximos a graficar
+DATA_INTERVAL = 15  
+DATA_POINTS = 2000  
+lazo = 1
 
 class Interfaz:
     def __init__(self, root):   
@@ -36,47 +37,76 @@ class Interfaz:
         self.enviarButton = tk.Button(root, text="Enviar", state="disabled", command=self.send_data)
         self.enviarButton.place(x=190, y=200)
 
+        self.lazoAbiertoButton = tk.Button(root, text="Lazo abierto", command=self.lazo_abierto)
+        self.lazoAbiertoButton.place(x=225, y=400)
+
+        self.lazoCerrado = tk.Button(root, text="Lazo cerrado", command=self.lazo_cerrado)
+        self.lazoCerrado.place(x=125, y=400)
+
         self.validador_angulo = tk.Label(root, text="Ángulo inválido", fg="red")
 
-        # Configuración de PID
+        self.kpTexto = tk.Label(root, text="KP", font=(5))
+        self.kpTexto.place(x=400, y=130)
         self.kpInput = tk.Entry(root)
         self.kpInput.place(x=400, y=150)
-        self.kpInput.insert(0, "0.6")
+        self.kpInput.insert(0, "2")
 
+        self.kiTexto = tk.Label(root, text="KI", font=(5))
+        self.kiTexto.place(x=400, y=175)
         self.kiInput = tk.Entry(root)
         self.kiInput.place(x=400, y=200)
-        self.kiInput.insert(0, "0.003")
+        self.kiInput.insert(0, "0.25")
 
+        self.kdTexto = tk.Label(root, text="KD", font=(5))
+        self.kdTexto.place(x=400, y=225)
         self.kdInput = tk.Entry(root)
         self.kdInput.place(x=400, y=250)
-        self.kdInput.insert(0, "0.8")
+        self.kdInput.insert(0, "4.26")
 
         self.resetPID = tk.Button(root, text="Reset PID", command=self.reset_pid)
         self.resetPID.place(x=400, y=300)
 
         self.serial_port = None
-        self.create_chart(root)  # Crear la gráfica
+        self.create_chart(root)
         self.update_ports()
 
-        # Inicializar colas para datos
         self.angles = deque([0] * DATA_POINTS, maxlen=DATA_POINTS)
         self.times = deque([0] * DATA_POINTS, maxlen=DATA_POINTS)
-        self.start_time = time.time()  # Tiempo de inicio
+        self.start_time = time.time()
 
         self.root.protocol("WM_DELETE_WINDOW", self.cerrar_ventana)
 
     def send_data(self):
         angulo = self.anguloInput.get()
+        kp = self.kpInput.get()
+        ki = self.kiInput.get()
+        kd = self.kdInput.get()
+
         try:
             angulo_float = float(angulo)
-            if angulo_float < 0:
+            kp_float = float(kp)
+            ki_float = float(ki)
+            kd_float = float(kd)
+            tipo_lazo = float(lazo)
+
+            if angulo_float < 0 or angulo_float > 360:
                 self.validador_angulo.place(x=170, y=170)
             else:
                 self.validador_angulo.place_forget()
                 if self.serial_port:
-                    self.serial_port.write(angulo.encode())
+                    data = f"{angulo_float},{kp_float},{ki_float},{kd_float},{tipo_lazo}\n"
+                    self.serial_port.write(data.encode())
         except ValueError:
             self.validador_angulo.place(x=170, y=170)
+
+
+    def lazo_abierto(self):
+        global lazo
+        lazo = 0
+
+    def lazo_cerrado(self):
+        global lazo
+        lazo = 1
 
     def on_combobox_select(self, event):
         if self.comboBox1.get() != "Seleccione puerto":
@@ -86,73 +116,57 @@ class Interfaz:
 
     def connect_serial(self):
         puerto_seleccionado = self.comboBox1.get()
-        self.serial_port = serial.Serial(puerto_seleccionado, 9600, timeout=1)
-        self.enviarButton.config(state="normal")
-
-    def reset_pid(self):
-        self.kpInput.delete(0, tk.END)
-        self.kpInput.insert(0, "0.6")
-        self.kiInput.delete(0, tk.END)
-        self.kiInput.insert(0, "0.003")
-        self.kdInput.delete(0, tk.END)
-        self.kdInput.insert(0, "0.8")
+        try:
+            self.serial_port = serial.Serial(puerto_seleccionado, 9600, timeout=1)
+            self.enviarButton.config(state="normal")
+            threading.Thread(target=self.read_from_serial, daemon=True).start()
+        except serial.SerialException as e:
+            print(f"Error al conectar con el puerto: {e}")
+            self.serial_port = None
 
     def create_chart(self, root):
         self.fig, self.ax = plt.subplots()
         self.ax.set_title("Valores de Ángulo en Tiempo Real")
-        self.ax.set_xlabel("Tiempo (s)")
-        self.ax.set_ylabel("Ángulo (°)")
-        self.ax.set_xlim(0, MAX_DATA_POINTS)
-        self.ax.set_ylim(-360, 360)
-
-        # Línea inicial vacía
+        self.ax.set_xlabel("Tiempo")
+        self.ax.set_ylabel("Ángulo")
         self.line, = self.ax.plot([], [], lw=2, label="Ángulo")
 
-        # Canvas de Matplotlib en Tkinter
         self.canvas = FigureCanvasTkAgg(self.fig, master=root)
-        self.canvas.get_tk_widget().place(x=600, y=50, width=400, height=400)
+        self.canvas.get_tk_widget().place(x=570, y=50, width=450, height=400)
         self.canvas.draw()
 
-        # Animación de la gráfica
-        self.ani = FuncAnimation(self.fig, self.update_chart, interval=DATA_INTERVAL, blit=False)
+        self.ani = FuncAnimation(self.fig, self.update_chart, interval=DATA_INTERVAL)
+
+    def reset_pid(self):
+        self.kpInput.delete(0, tk.END)
+        self.kpInput.insert(0, "2")
+        self.kiInput.delete(0, tk.END)
+        self.kiInput.insert(0, "0.25")
+        self.kdInput.delete(0, tk.END)
+        self.kdInput.insert(0, "4.6")
 
     def update_chart(self, frame):
-        if self.serial_port and self.serial_port.in_waiting > 0:
-            input_data = self.read_from_serial()
+        if len(self.times) > 1:
+            self.line.set_data(self.times, self.angles)
+            self.ax.set_xlim(min(self.times), max(self.times))
+            self.ax.set_ylim(0, 360)  
 
-            try:
-                # Convertir el dato recibido a un flotante
-                angulo = float(input_data)
-                tiempo_actual = time.time() - self.start_time  # Tiempo relativo al inicio
+            self.ax.set_yticks(range(20, 361, 20))
 
-                # Agregar datos a las colas
-                self.times.append(tiempo_actual)
-                self.angles.append(angulo)
-
-                # Actualizar los datos de la línea
-                self.line.set_data(self.times, self.angles)
-
-                # Ajustar los límites del eje
-                self.ax.set_xlim(max(0, self.times[0]), self.times[-1])
-                self.ax.set_ylim(min(self.angles) - 10, max(self.angles) + 10)
-
-            except ValueError:
-                print(f"Error al convertir los datos: {input_data}")
-
-        self.canvas.draw()
+            self.canvas.draw()
         return self.line
 
-
     def read_from_serial(self):
-        if self.serial_port:
+        while self.serial_port and self.serial_port.is_open:
             try:
-                # Leer una línea del puerto serial
                 data = self.serial_port.readline().decode('utf-8').strip()
-                print(f"Dato recibido: {data}")  # Mostrar los datos recibidos
-                return data
-            except (UnicodeDecodeError, serial.SerialException) as e:
-                print(f"Error al leer del puerto serial: {e}")
-        return ""
+                if data:
+                    angulo = float(data)
+                    tiempo_actual = time.time() - self.start_time
+                    self.times.append(tiempo_actual)
+                    self.angles.append(angulo)
+            except (ValueError, serial.SerialException):
+                pass
 
     def update_ports(self):
         ports = [port.device for port in serial.tools.list_ports.comports()]
