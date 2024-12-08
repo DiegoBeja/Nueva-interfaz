@@ -10,9 +10,8 @@ import time
 import threading
 
 MAX_DATA_POINTS = 100
-DATA_INTERVAL = 15  
-DATA_POINTS = 2000  
-lazo = 1
+DATA_INTERVAL = 100  # Intervalo de actualización en milisegundos
+DATA_POINTS = 50  # Puntos máximos a graficar
 
 class Interfaz:
     def __init__(self, root):   
@@ -45,8 +44,7 @@ class Interfaz:
 
         self.validador_angulo = tk.Label(root, text="Ángulo inválido", fg="red")
 
-        self.kpTexto = tk.Label(root, text="KP", font=(5))
-        self.kpTexto.place(x=400, y=130)
+        # Configuración de PID
         self.kpInput = tk.Entry(root)
         self.kpInput.place(x=400, y=150)
         self.kpInput.insert(0, "2")
@@ -70,6 +68,7 @@ class Interfaz:
         self.create_chart(root)
         self.update_ports()
 
+        # Inicializar colas para datos
         self.angles = deque([0] * DATA_POINTS, maxlen=DATA_POINTS)
         self.times = deque([0] * DATA_POINTS, maxlen=DATA_POINTS)
         self.start_time = time.time()
@@ -84,18 +83,12 @@ class Interfaz:
 
         try:
             angulo_float = float(angulo)
-            kp_float = float(kp)
-            ki_float = float(ki)
-            kd_float = float(kd)
-            tipo_lazo = float(lazo)
-
             if angulo_float < 0 or angulo_float > 360:
                 self.validador_angulo.place(x=170, y=170)
             else:
                 self.validador_angulo.place_forget()
                 if self.serial_port:
-                    data = f"{angulo_float},{kp_float},{ki_float},{kd_float},{tipo_lazo}\n"
-                    self.serial_port.write(data.encode())
+                    self.serial_port.write(f"{angulo}\n".encode())
         except ValueError:
             self.validador_angulo.place(x=170, y=170)
 
@@ -127,9 +120,10 @@ class Interfaz:
     def create_chart(self, root):
         self.fig, self.ax = plt.subplots()
         self.ax.set_title("Valores de Ángulo en Tiempo Real")
-        self.ax.set_xlabel("Tiempo")
-        self.ax.set_ylabel("Ángulo")
+        self.ax.set_xlabel("Tiempo (s)")
+        self.ax.set_ylabel("Ángulo (°)")
         self.line, = self.ax.plot([], [], lw=2, label="Ángulo")
+        self.ax.legend()
 
         self.canvas = FigureCanvasTkAgg(self.fig, master=root)
         self.canvas.get_tk_widget().place(x=570, y=50, width=450, height=400)
@@ -137,19 +131,25 @@ class Interfaz:
 
         self.ani = FuncAnimation(self.fig, self.update_chart, interval=DATA_INTERVAL)
 
-    def reset_pid(self):
-        self.kpInput.delete(0, tk.END)
-        self.kpInput.insert(0, "2")
-        self.kiInput.delete(0, tk.END)
-        self.kiInput.insert(0, "0.25")
-        self.kdInput.delete(0, tk.END)
-        self.kdInput.insert(0, "4.6")
-
     def update_chart(self, frame):
-        if len(self.times) > 1:
-            self.line.set_data(self.times, self.angles)
-            self.ax.set_xlim(min(self.times), max(self.times))
-            self.ax.set_ylim(0, 360)  
+        if self.serial_port and self.serial_port.in_waiting > 0:
+            input_data = self.read_from_serial()
+
+            try:
+                # Convertir el dato recibido a un flotante
+                angulo = float(input_data)
+                tiempo_actual = time.time() - self.start_time  # Tiempo relativo al inicio
+
+                # Agregar datos a las colas
+                self.times.append(tiempo_actual)
+                self.angles.append(angulo)
+
+                # Actualizar los datos de la línea
+                self.line.set_data(self.times, self.angles)
+
+                # Ajustar los límites del eje
+                self.ax.set_xlim(max(0, self.times[0]), self.times[-1])
+                self.ax.set_ylim(min(self.angles) - 10, max(self.angles) + 10)
 
             self.ax.set_yticks(range(20, 361, 20))
 
