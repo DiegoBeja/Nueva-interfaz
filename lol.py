@@ -1,63 +1,176 @@
 import serial
+import tkinter as tk
+from tkinter import ttk
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from collections import deque
+import serial.tools.list_ports
 import time
+import threading
 
-# Configuración del puerto serial
-PORT = 'COM7'  # Cambia esto al puerto donde está c     onectado tu Arduino
-BAUD_RATE = 9600
-DATA_POINTS = 100 # Número de puntos a graficar
+MAX_DATA_POINTS = 100
+DATA_INTERVAL = 15  
+DATA_POINTS = 2000  
+lazo = 1
 
-# Inicializar puerto serial
-ser = serial.Serial(PORT, BAUD_RATE, timeout=1)
+class Interfaz:
+    def __init__(self, root):   
+        self.root = root
+        self.root.title("Control de posición")
+        self.root.geometry("1000x500")
 
-# Esperar a que Arduino se reinicie
-time.sleep(2)
+        self.comboBox1 = ttk.Combobox(root, state="readonly")
+        self.comboBox1.place(x=100, y=303)
+        self.comboBox1.set("Seleccione puerto")
+        self.comboBox1.bind("<<ComboboxSelected>>", self.on_combobox_select)
 
-# Enviar un número para que el Arduino comience a enviar datos
-ser.write(b'180\n')
+        self.conectarButton = tk.Button(root, text="Conectar", state="disabled", command=self.connect_serial)
+        self.conectarButton.place(x=250, y=300)
 
-# Cola para almacenar datos
-angles = deque([0] * DATA_POINTS, maxlen=DATA_POINTS)
-times = deque([0] * DATA_POINTS, maxlen=DATA_POINTS)
+        self.instrucciones = tk.Label(root, text="Ingrese un ángulo", font=(13))
+        self.instrucciones.place(x=150, y=100)
 
-# Función para leer datos del puerto serial
-def read_serial_data():
-    try:
-        if ser.in_waiting > 0:
-            line = ser.readline().decode('utf-8').strip()
-            return float(line)  # Convertir el dato a float
-    except Exception as e:
-        print(f"Error leyendo datos: {e}")
-    return None
+        self.anguloInput = tk.Entry(root)
+        self.anguloInput.place(x=150, y=150)
 
-# Función para actualizar la gráfica
-def update(frame):
-    data = read_serial_data()
-    if data is not None:
-        angles.append(data)
-        current_time = frame   # Tiempo en segundos, ajusta el intervalo
-        times.append(current_time)
-    line.set_ydata(angles)
-    line.set_xdata(times)  # Establecer los tiempos en el eje X
-    return line,
+        self.enviarButton = tk.Button(root, text="Enviar", state="disabled", command=self.send_data)
+        self.enviarButton.place(x=190, y=200)
 
-# Configuración de la gráfica
-fig, ax = plt.subplots()
-line, = ax.plot(range(DATA_POINTS), [0] * DATA_POINTS, label="Ángulo Actual")
-ax.set_ylim(-360, 360)
-ax.set_xlim(0, DATA_POINTS)  # Inicialmente limitado a 100 puntos
-ax.set_title("Gráfica en Tiempo Real del Ángulo Actual")
-ax.set_xlabel("Tiempo (segundos)")
-ax.set_ylabel("Ángulo (grados)")
-ax.legend()
+        self.lazoAbiertoButton = tk.Button(root, text="Lazo abierto", command=self.lazo_abierto)
+        self.lazoAbiertoButton.place(x=225, y=400)
 
-# Animación de la gráfica
-ani = FuncAnimation(fig, update, interval=50)
+        self.lazoCerrado = tk.Button(root, text="Lazo cerrado", command=self.lazo_cerrado)
+        self.lazoCerrado.place(x=125, y=400)
 
-# Mostrar la gráfica
-plt.show()
+        self.validador_angulo = tk.Label(root, text="Ángulo inválido", fg="red")
 
-# Cerrar el puerto serial al terminar
-ser.close()
+        self.kpTexto = tk.Label(root, text="KP", font=(5))
+        self.kpTexto.place(x=400, y=130)
+        self.kpInput = tk.Entry(root)
+        self.kpInput.place(x=400, y=150)
+        self.kpInput.insert(0, "2")
+
+        self.kiTexto = tk.Label(root, text="KI", font=(5))
+        self.kiTexto.place(x=400, y=175)
+        self.kiInput = tk.Entry(root)
+        self.kiInput.place(x=400, y=200)
+        self.kiInput.insert(0, "0.25")
+
+        self.kdTexto = tk.Label(root, text="KD", font=(5))
+        self.kdTexto.place(x=400, y=225)
+        self.kdInput = tk.Entry(root)
+        self.kdInput.place(x=400, y=250)
+        self.kdInput.insert(0, "4.26")
+
+        self.resetPID = tk.Button(root, text="Reset PID", command=self.reset_pid)
+        self.resetPID.place(x=400, y=300)
+
+        self.serial_port = None
+        self.create_chart(root)
+        self.update_ports()
+
+        self.angles = deque([0] * DATA_POINTS, maxlen=DATA_POINTS)
+        self.times = deque([0] * DATA_POINTS, maxlen=DATA_POINTS)
+        self.start_time = time.time()
+
+        self.root.protocol("WM_DELETE_WINDOW", self.cerrar_ventana)
+
+    def send_data(self):
+        angulo = self.anguloInput.get()
+        kp = self.kpInput.get()
+        ki = self.kiInput.get()
+        kd = self.kdInput.get()
+
+        try:
+            angulo_float = float(angulo)
+            kp_float = float(kp)
+            ki_float = float(ki)
+            kd_float = float(kd)
+            tipo_lazo = float(lazo)
+
+            if angulo_float < 0 or angulo_float > 360:
+                self.validador_angulo.place(x=170, y=170)
+            else:
+                self.validador_angulo.place_forget()
+                if self.serial_port:
+                    data = f"{angulo_float},{kp_float},{ki_float},{kd_float},{tipo_lazo}\n"
+                    self.serial_port.write(data.encode())
+        except ValueError:
+            self.validador_angulo.place(x=170, y=170)
+
+    def on_combobox_select(self, event):
+        if self.comboBox1.get() != "Seleccione puerto":
+            self.conectarButton.config(state="normal")
+        else:
+            self.conectarButton.config(state="disabled")
+
+    def connect_serial(self):
+        puerto_seleccionado = self.comboBox1.get()
+        try:
+            self.serial_port = serial.Serial(puerto_seleccionado, 9600, timeout=1)
+            self.enviarButton.config(state="normal")
+            threading.Thread(target=self.read_from_serial, daemon=True).start()
+        except serial.SerialException as e:
+            print(f"Error al conectar con el puerto: {e}")
+            self.serial_port = None
+
+    def create_chart(self, root):
+        self.fig, self.ax = plt.subplots()
+        self.ax.set_title("Valores de Ángulo en Tiempo Real")
+        self.ax.set_xlabel("Tiempo")
+        self.ax.set_ylabel("Ángulo")
+        self.line, = self.ax.plot([], [], lw=2, label="Ángulo")
+
+        self.canvas = FigureCanvasTkAgg(self.fig, master=root)
+        self.canvas.get_tk_widget().place(x=570, y=50, width=450, height=400)
+        self.canvas.draw()
+
+        # Animación de la gráfica
+        self.ani = FuncAnimation(self.fig, self.update_chart, interval=DATA_INTERVAL, blit=False)
+
+    def update_chart(self, frame):
+        if len(self.times) > 1:
+            self.line.set_data(self.times, self.angles)
+            self.ax.set_xlim(min(self.times), max(self.times))
+            self.ax.set_ylim(0, 360)  
+
+            self.ax.set_yticks(range(20, 361, 20))
+
+            self.canvas.draw()
+        return self.line
+
+    def read_from_serial(self):
+        while self.serial_port and self.serial_port.is_open:
+            try:
+                data = self.serial_port.readline().decode('utf-8').strip()
+                if data:
+                    angulo = float(data)
+                    tiempo_actual = time.time() - self.start_time
+                    self.times.append(tiempo_actual)
+                    self.angles.append(angulo)
+            except (ValueError, serial.SerialException):
+                pass
+
+    def update_ports(self):
+        ports = [port.device for port in serial.tools.list_ports.comports()]
+        if ports:
+            self.comboBox1['values'] = ports
+            self.comboBox1.set("Seleccione una opción")
+        else:
+            self.comboBox1.set("No hay puertos disponibles")
+            self.comboBox1.config(state="disabled")
+
+    def cerrar_ventana(self):
+        if self.serial_port:
+            self.serial_port.close()
+        self.root.quit()
+        self.root.destroy()
+
+def main():
+    root = tk.Tk()
+    app = Interfaz(root)
+    root.mainloop()
+
+if __name__ == "__main__":
+    main()

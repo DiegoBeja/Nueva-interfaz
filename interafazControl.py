@@ -9,6 +9,7 @@ import serial.tools.list_ports
 import time
 import threading
 
+# Configuración global
 MAX_DATA_POINTS = 100
 DATA_INTERVAL = 100  # Intervalo de actualización en milisegundos
 DATA_POINTS = 50  # Puntos máximos a graficar
@@ -36,34 +37,9 @@ class Interfaz:
         self.enviarButton = tk.Button(root, text="Enviar", state="disabled", command=self.send_data)
         self.enviarButton.place(x=190, y=200)
 
-        self.lazoAbiertoButton = tk.Button(root, text="Lazo abierto", command=self.lazo_abierto)
-        self.lazoAbiertoButton.place(x=225, y=400)
-
-        self.lazoCerrado = tk.Button(root, text="Lazo cerrado", command=self.lazo_cerrado)
-        self.lazoCerrado.place(x=125, y=400)
-
         self.validador_angulo = tk.Label(root, text="Ángulo inválido", fg="red")
 
-        # Configuración de PID
-        self.kpInput = tk.Entry(root)
-        self.kpInput.place(x=400, y=150)
-        self.kpInput.insert(0, "2")
-
-        self.kiTexto = tk.Label(root, text="KI", font=(5))
-        self.kiTexto.place(x=400, y=175)
-        self.kiInput = tk.Entry(root)
-        self.kiInput.place(x=400, y=200)
-        self.kiInput.insert(0, "0.25")
-
-        self.kdTexto = tk.Label(root, text="KD", font=(5))
-        self.kdTexto.place(x=400, y=225)
-        self.kdInput = tk.Entry(root)
-        self.kdInput.place(x=400, y=250)
-        self.kdInput.insert(0, "4.26")
-
-        self.resetPID = tk.Button(root, text="Reset PID", command=self.reset_pid)
-        self.resetPID.place(x=400, y=300)
-
+        # Inicializar serial y gráfica
         self.serial_port = None
         self.create_chart(root)
         self.update_ports()
@@ -77,10 +53,6 @@ class Interfaz:
 
     def send_data(self):
         angulo = self.anguloInput.get()
-        kp = self.kpInput.get()
-        ki = self.kiInput.get()
-        kd = self.kdInput.get()
-
         try:
             angulo_float = float(angulo)
             if angulo_float < 0 or angulo_float > 360:
@@ -91,15 +63,6 @@ class Interfaz:
                     self.serial_port.write(f"{angulo}\n".encode())
         except ValueError:
             self.validador_angulo.place(x=170, y=170)
-
-
-    def lazo_abierto(self):
-        global lazo
-        lazo = 0
-
-    def lazo_cerrado(self):
-        global lazo
-        lazo = 1
 
     def on_combobox_select(self, event):
         if self.comboBox1.get() != "Seleccione puerto":
@@ -126,33 +89,16 @@ class Interfaz:
         self.ax.legend()
 
         self.canvas = FigureCanvasTkAgg(self.fig, master=root)
-        self.canvas.get_tk_widget().place(x=570, y=50, width=450, height=400)
+        self.canvas.get_tk_widget().place(x=600, y=50, width=400, height=400)
         self.canvas.draw()
 
         self.ani = FuncAnimation(self.fig, self.update_chart, interval=DATA_INTERVAL)
 
     def update_chart(self, frame):
-        if self.serial_port and self.serial_port.in_waiting > 0:
-            input_data = self.read_from_serial()
-
-            try:
-                # Convertir el dato recibido a un flotante
-                angulo = float(input_data)
-                tiempo_actual = time.time() - self.start_time  # Tiempo relativo al inicio
-
-                # Agregar datos a las colas
-                self.times.append(tiempo_actual)
-                self.angles.append(angulo)
-
-                # Actualizar los datos de la línea
-                self.line.set_data(self.times, self.angles)
-
-                # Ajustar los límites del eje
-                self.ax.set_xlim(max(0, self.times[0]), self.times[-1])
-                self.ax.set_ylim(min(self.angles) - 10, max(self.angles) + 10)
-
-            self.ax.set_yticks(range(20, 361, 20))
-
+        if len(self.times) > 1:
+            self.line.set_data(self.times, self.angles)
+            self.ax.set_xlim(min(self.times), max(self.times))
+            self.ax.set_ylim(min(self.angles) - 10, max(self.angles) + 10)
             self.canvas.draw()
         return self.line
 
